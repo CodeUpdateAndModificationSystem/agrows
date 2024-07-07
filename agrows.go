@@ -362,42 +362,50 @@ func writeCombinedTreeAndGenerated(tree *dst.File, generated *jen.File, writer i
 	return n, err
 }
 
-const SERVER byte = 0x01
-const CLIENT byte = 0x02
+const (
+	SERVER byte = iota + 1
+	CLIENT
+)
 
 func main() {
-	inputParameter := flag.StringP("input", "i", "", "Input file")
-	outputParameter := flag.StringP("output", "o", "", "Output file")
+	inputParameter := flag.StringP("input", "i", "", "Input file (required)")
+	outputParameter := flag.StringP("output", "o", "", "Output file (default: agrows_<input>)")
 	debugParameter := flag.BoolP("dbg", "D", false, "Enable debug logging")
 
 	serverCmd := flag.NewFlagSet("server", flag.ExitOnError)
-	_ = serverCmd
-
 	clientCmd := flag.NewFlagSet("client", flag.ExitOnError)
-	_ = clientCmd
 
 	flag.Parse()
-	fmt.Println("/*")
+
 	if *debugParameter {
 		log.SetMinLevel(log.DEBUG)
 		log.Debug("Debug logging enabled")
 	}
-	input := *inputParameter
-	var output io.Writer
-	_ = output
 
-	if input == "" {
-		panic("input parameter is required")
+	if *inputParameter == "" {
+		printUsageAndExit("Error: --input parameter is required")
 	}
-	if outputParameter == nil || *outputParameter == "" {
-		outputFile := fmt.Sprintf("agrows_%s", input)
-		output, _ = os.Create(outputFile)
+
+	var output io.Writer
+	if *outputParameter == "" {
+		outputFile := fmt.Sprintf("agrows_%s", *inputParameter)
+		var err error
+		output, err = os.Create(outputFile)
+		if err != nil {
+			log.Errorf(true, "Failed to create output file: %v", err)
+		}
 	} else if *outputParameter == "-" {
 		output = os.Stdout
+	} else {
+		var err error
+		output, err = os.Create(*outputParameter)
+		if err != nil {
+			log.Errorf(true, "Failed to create output file: %v", err)
+		}
 	}
 
 	if flag.NArg() < 1 {
-		panic("expected 'server' or 'client' subcommands")
+		printUsageAndExit("Error: expected 'server' or 'client' subcommand")
 	}
 
 	var generatorType byte
@@ -405,18 +413,20 @@ func main() {
 	case "server":
 		err := serverCmd.Parse(flag.Args()[1:])
 		if err != nil {
-			return
+			log.Errorf(true, "Failed to parse 'server' subcommand: %v", err)
 		}
 		generatorType = SERVER
 	case "client":
 		err := clientCmd.Parse(flag.Args()[1:])
 		if err != nil {
-			return
+			log.Errorf(true, "Failed to parse 'client' subcommand: %v", err)
 		}
 		generatorType = CLIENT
+	default:
+		printUsageAndExit(fmt.Sprintf("Error: unknown subcommand '%s'", flag.Arg(0)))
 	}
 
-	inputFile, err := os.Open(input)
+	inputFile, err := os.Open(*inputParameter)
 	if err != nil {
 		log.Errorf(true, "Failed to open input file: %v", err)
 	}
@@ -442,10 +452,19 @@ func main() {
 		newFile.Add(generateJSSendMessageFunction())
 	}
 
-	fmt.Println("*/")
-
 	_, err = writeCombinedTreeAndGenerated(tree, newFile, output, generatorType)
 	if err != nil {
 		log.Errorf(true, "Failed to save combined file: %v", err)
 	}
+}
+
+func printUsageAndExit(message string) {
+	fmt.Fprintln(os.Stderr, message)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "agrows - Almost Good RPC Over WebSockets")
+	fmt.Fprintln(os.Stderr, "Usage:")
+	fmt.Fprintln(os.Stderr, "  agrows --input <input_file> [--output <output_file>] [--dbg] <server|client>")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	flag.PrintDefaults()
+	os.Exit(1)
 }
