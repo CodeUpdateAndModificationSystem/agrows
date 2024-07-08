@@ -186,41 +186,73 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 			jen.If(jen.Err().Op("!=").Nil()).Block(
 				jen.Return(jen.Lit(""), jen.Err()),
 			),
+
 			jen.Switch(jen.Id("functionName")).BlockFunc(func(generator *jen.Group) {
 				for _, fnInfo := range infos {
 					generator.Empty()
 					generator.Case(jen.Lit(fnInfo.OriginalIdentifier.Name)).
 						BlockFunc(func(caseGenerator *jen.Group) {
-							for i, param := range fnInfo.Params.List {
-								caseGenerator.Id("param" + fmt.Sprint(i)).Op(",").Id("ok").Op(":=").Id("args").Index(jen.Lit(i)).Op(".").Id("Value").Assert(jen.Qual("", param.Type.(*dst.Ident).Name))
-								caseGenerator.If(jen.Op("!").Id("ok")).Block(
+							caseGenerator.Var().DefsFunc(func(g *jen.Group) {
+								for _, param := range fnInfo.Params.List {
+									originalParamName := param.Names[0].Name
+									paramName := originalParamName + "Param"
+									paramType := param.Type.(*dst.Ident).Name
+									paramNameArg := paramName + "Arg"
+
+									g.Id(paramName).Qual("", paramType)
+									g.Id(paramNameArg).Qual("github.com/codeupdateandmodificationsystem/protocol", "Argument")
+								}
+								g.Id("ok").Bool()
+							})
+							for _, param := range fnInfo.Params.List {
+								originalParamName := param.Names[0].Name
+								paramName := originalParamName + "Param"
+								paramType := param.Type.(*dst.Ident).Name
+								paramNameArg := paramName + "Arg"
+
+								caseGenerator.If(jen.Id(paramNameArg).Op(",").Id("ok").Op("=").Id("args").Index(jen.Lit(originalParamName)).Op(";").Op("!").Id("ok").Block(
+									jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
+										jen.Qual("fmt", "Sprintf").Call(
+											jen.Lit("parameter %s is not in the received arguments"),
+											jen.Lit(originalParamName),
+										),
+									)),
+								))
+
+								caseGenerator.If(jen.Id(paramName).Op(",").Id("ok").Op("=").Id(paramNameArg).Op(".").Qual("", "Value").Assert(jen.Qual("", paramType)).Op(";").Op("!").Id("ok").Block(
 									jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
 										jen.Qual("fmt", "Sprintf").Call(
 											jen.Lit("failed to cast parameter '%s' to '%s'"),
-											jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "TypeToString").Index(jen.Id("args").Index(jen.Lit(i)).Dot("Typ")),
-											jen.Lit(param.Type.(*dst.Ident).Name),
+											jen.Id(paramName),
+											jen.Lit(paramType),
 										),
 									)),
-								)
+								))
 							}
 							modifiedFunctionName := prefixForModifiedFunction + fnInfo.OriginalIdentifier.Name
 
 							if len(fnInfo.Results.List) == 0 {
 								caseGenerator.Id(modifiedFunctionName).CallFunc(func(callGenerator *jen.Group) {
-									for i := range fnInfo.Params.List {
-										callGenerator.Id("param" + fmt.Sprint(i))
+									for _, param := range fnInfo.Params.List {
+										callGenerator.Id(param.Names[0].Name + "Param")
 									}
 								})
 								caseGenerator.Return(jen.Lit(""), jen.Nil())
 								return
 							}
 
-							returnedErrorName := ""
+							firstReturnedError := ""
+							firstReturnedString := ""
 							varNames := make([]string, len(fnInfo.Results.List))
 							for i := range fnInfo.Results.List {
 								if fnInfo.Results.List[i].Type.(*dst.Ident).Name == "error" {
 									varNames[i] = "err" + fmt.Sprint(i)
-									returnedErrorName = varNames[i]
+									firstReturnedError = varNames[i]
+									continue
+								}
+								if fnInfo.Results.List[i].Type.(*dst.Ident).Name == "string" {
+									varNames[i] = "str" + fmt.Sprint(i)
+									firstReturnedString = varNames[i]
 									continue
 								}
 								varNames[i] = "ret" + fmt.Sprint(i)
@@ -231,27 +263,33 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 									retGenerator.Id(varName)
 								}
 							}).Op(":=").Id(modifiedFunctionName).CallFunc(func(callGenerator *jen.Group) {
-								for i := range fnInfo.Params.List {
-									callGenerator.Id("param" + fmt.Sprint(i))
+								for _, param := range fnInfo.Params.List {
+									callGenerator.Id(param.Names[0].Name + "Param")
 								}
 							})
 
-							if returnedErrorName != "" {
-								caseGenerator.If(jen.Id(returnedErrorName).Op("!=").Nil()).Block(
-									jen.Return(jen.Lit(""), jen.Id(returnedErrorName)),
+							if firstReturnedError != "" {
+								caseGenerator.If(jen.Id(firstReturnedError).Op("!=").Nil()).Block(
+									jen.Return(jen.Lit(""), jen.Id(firstReturnedError)),
 								)
 							}
 
-							formattedReturns := jen.Qual("fmt", "Sprintf").Call(
-								jen.Lit(fmt.Sprintf("'%%+v'%s", strings.Repeat(", '%+v'", len(varNames)-1))),
-								jen.ListFunc(func(paramGenerator *jen.Group) {
-									for _, varName := range varNames {
-										paramGenerator.Id(varName)
-									}
-								}),
-							)
+							var strReturn *jen.Statement
 
-							caseGenerator.Return(formattedReturns, jen.Nil())
+							if firstReturnedString != "" {
+								strReturn = jen.Id(firstReturnedString)
+							} else {
+								strReturn = jen.Qual("fmt", "Sprintf").Call(
+									jen.Lit(fmt.Sprintf("'%%+v'%s", strings.Repeat(", '%+v'", len(varNames)-1))),
+									jen.ListFunc(func(paramGenerator *jen.Group) {
+										for _, varName := range varNames {
+											paramGenerator.Id(varName)
+										}
+									}),
+								)
+							}
+
+							caseGenerator.Return(strReturn, jen.Nil())
 						})
 				}
 				generator.Empty()
