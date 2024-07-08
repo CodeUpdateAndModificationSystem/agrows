@@ -168,6 +168,7 @@ func generateJSSendMessageFunction() *jen.Statement {
 		jen.Id("uint8Array").Op(":=").Qual("syscall/js", "TypedArrayOf").Call(jen.Id("data")),
 		jen.Defer().Id("uint8Array").Dot("Release").Call(),
 		jen.Id("sendMessageFunc").Dot("Invoke").Call(jen.Id("uint8Array")),
+		jen.Return(jen.Nil()),
 	).Line()
 }
 
@@ -183,7 +184,7 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 				Call(jen.Id("data"), jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call()),
 
 			jen.If(jen.Err().Op("!=").Nil()).Block(
-				jen.Return(jen.Err()),
+				jen.Return(jen.Lit(""), jen.Err()),
 			),
 			jen.Switch(jen.Id("functionName")).BlockFunc(func(generator *jen.Group) {
 				for _, fnInfo := range infos {
@@ -191,7 +192,7 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 					generator.Case(jen.Lit(fnInfo.OriginalIdentifier.Name)).
 						BlockFunc(func(caseGenerator *jen.Group) {
 							for i, param := range fnInfo.Params.List {
-								caseGenerator.Id("param" + fmt.Sprint(i)).Op(",").Id("ok").Op(":=").Id("args").Index(jen.Lit(i)).Assert(jen.Qual("", param.Type.(*dst.Ident).Name))
+								caseGenerator.Id("param" + fmt.Sprint(i)).Op(",").Id("ok").Op(":=").Id("args").Index(jen.Lit(i)).Op(".").Id("Value").Assert(jen.Qual("", param.Type.(*dst.Ident).Name))
 								caseGenerator.If(jen.Op("!").Id("ok")).Block(
 									jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
 										jen.Qual("fmt", "Sprintf").Call(
@@ -255,7 +256,7 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 				}
 				generator.Empty()
 				generator.Default().Block(
-					jen.Return(jen.Qual("errors", "New").Call(jen.Qual("fmt", "Sprintf").Call(jen.Lit("unknown function '%s'"), jen.Id("functionName")))),
+					jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(jen.Qual("fmt", "Sprintf").Call(jen.Lit("unknown function '%s'"), jen.Id("functionName")))),
 				)
 			}),
 		)
