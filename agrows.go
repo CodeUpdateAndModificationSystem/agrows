@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -369,7 +370,7 @@ const (
 
 func main() {
 	inputParameter := flag.StringP("input", "i", "", "Input file (required)")
-	outputParameter := flag.StringP("output", "o", "", "Output file (default: agrows_<input>)")
+	outputParameter := flag.StringP("output", "o", "", "Output file (default: agrows_<server|client>_<input_file>)")
 	debugParameter := flag.BoolP("dbg", "D", false, "Enable debug logging")
 
 	serverCmd := flag.NewFlagSet("server", flag.ExitOnError)
@@ -384,24 +385,6 @@ func main() {
 
 	if *inputParameter == "" {
 		printUsageAndExit("Error: --input parameter is required")
-	}
-
-	var output io.Writer
-	if *outputParameter == "" {
-		outputFile := fmt.Sprintf("agrows_%s", *inputParameter)
-		var err error
-		output, err = os.Create(outputFile)
-		if err != nil {
-			log.Errorf(true, "Failed to create output file: %v", err)
-		}
-	} else if *outputParameter == "-" {
-		output = os.Stdout
-	} else {
-		var err error
-		output, err = os.Create(*outputParameter)
-		if err != nil {
-			log.Errorf(true, "Failed to create output file: %v", err)
-		}
 	}
 
 	if flag.NArg() < 1 {
@@ -424,6 +407,32 @@ func main() {
 		generatorType = CLIENT
 	default:
 		printUsageAndExit(fmt.Sprintf("Error: unknown subcommand '%s'", flag.Arg(0)))
+	}
+
+	var output io.Writer
+	if *outputParameter == "" {
+		var env string
+		if generatorType == SERVER {
+			env = "server"
+		} else {
+			env = "client"
+		}
+		fileName := filepath.Base(*inputParameter)
+		filePath := filepath.Dir(*inputParameter)
+		outputFile := filepath.Join(filePath, fmt.Sprintf("agrows_%s_%s", env, fileName))
+		var err error
+		output, err = os.Create(outputFile)
+		if err != nil {
+			log.Errorf(true, "Failed to create output file: %v", err)
+		}
+	} else if *outputParameter == "-" {
+		output = os.Stdout
+	} else {
+		var err error
+		output, err = os.Create(*outputParameter)
+		if err != nil {
+			log.Errorf(true, "Failed to create output file: %v", err)
+		}
 	}
 
 	inputFile, err := os.Open(*inputParameter)
