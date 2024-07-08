@@ -137,10 +137,10 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 			g.Error()
 		}).
 		Block(
-			jen.Id("data").Op(",").Err().Op(":=").Qual("github.com/codeupdateandmoodificationsystem/protocol", "EncodeFunctionCall").
+			jen.Id("data").Op(",").Err().Op(":=").Qual("github.com/codeupdateandmodificationsystem/protocol", "EncodeFunctionCall").
 				Call(
 					jen.Lit(info.OriginalIdentifier.Name),
-					jen.Qual("github.com/codeupdateandmoodificationsystem/protocol", "Options").Call(),
+					jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call(),
 					jen.Map(jen.String()).Any().ValuesFunc(func(g *jen.Group) {
 						for _, param := range info.Params.List {
 							g.Line().Lit(param.Names[0].Name).Op(":").Id(param.Names[0].Name)
@@ -179,8 +179,8 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 		Block(
 			jen.List(jen.Id("functionName"), jen.Id("args"), jen.Id("err")).
 				Op(":=").
-				Qual("github.com/codeupdateandmoodificationsystem/protocol", "DecodeFunctionCall").
-				Call(jen.Id("data"), jen.Qual("github.com/codeupdateandmoodificationsystem/protocol", "Options").Call()),
+				Qual("github.com/codeupdateandmodificationsystem/protocol", "DecodeFunctionCall").
+				Call(jen.Id("data"), jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call()),
 
 			jen.If(jen.Err().Op("!=").Nil()).Block(
 				jen.Return(jen.Err()),
@@ -196,7 +196,7 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 									jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
 										jen.Qual("fmt", "Sprintf").Call(
 											jen.Lit("failed to cast parameter '%s' to '%s'"),
-											jen.Qual("github.com/codeupdateandmoodificationsystem/protocol", "TypeToString").Index(jen.Id("args").Index(jen.Lit(i)).Dot("Typ")),
+											jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "TypeToString").Index(jen.Id("args").Index(jen.Lit(i)).Dot("Typ")),
 											jen.Lit(param.Type.(*dst.Ident).Name),
 										),
 									)),
