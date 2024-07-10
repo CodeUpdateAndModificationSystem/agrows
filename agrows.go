@@ -199,9 +199,9 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 			for i, param := range info.Params.List {
 				if len(param.Names) > 0 {
 					paramName := param.Names[0].Name
-					g.If(jen.Id(paramName).Op(",").Id("ok").Op(":=").Id("p").Index(jen.Lit(i)).Assert(jen.Qual("", param.Type.(*dst.Ident).Name)).Op(";").Op("!").Id("ok").Block(
-						jen.Return(jen.Qual("errors", "New").Call(jen.Lit(fmt.Sprintf("parameter '%s' is not in the received arguments", paramName)))),
-					))
+					g.Id(paramName).Op(",").Id("ok").Op(":=").Id("p").Index(jen.Lit(i)).Assert(jen.Qual("", param.Type.(*dst.Ident).Name))
+					g.If(jen.Op("!").Id("ok")).Block(
+						jen.Return(jen.Qual("errors", "New").Call(jen.Lit(fmt.Sprintf("parameter '%s' is not in the received arguments", paramName)))))
 				}
 			}
 			g.Return(
