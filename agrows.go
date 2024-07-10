@@ -26,7 +26,8 @@ type FuncInfo struct {
 	Results            *dst.FieldList
 }
 
-const prefixForModifiedFunction = "agrows_"
+const modifiedFunctionFormat = "agrows_%s"
+const wrapperFunctionFormat = "%sWrapper"
 
 func (f FuncInfo) String() string {
 	var sb strings.Builder
@@ -81,14 +82,44 @@ func extractFuncInfo(node *dst.File) []FuncInfo {
 	dst.Inspect(node, func(n dst.Node) bool {
 		if fn, ok := n.(*dst.FuncDecl); ok && fn.Name.IsExported() {
 			originalIdentifier := *fn.Name
+
 			var Params dst.FieldList
-			if fn.Type.Params != nil {
-				Params = *fn.Type.Params
-			}
 			var Results dst.FieldList
-			if fn.Type.Results != nil {
-				Results = *fn.Type.Results
+
+			if fn.Type.Params != nil {
+				Params = dst.FieldList{
+					List: []*dst.Field{},
+				}
+				for _, param := range fn.Type.Params.List {
+					for _, name := range param.Names {
+						Params.List = append(Params.List, &dst.Field{
+							Names: []*dst.Ident{name},
+							Type:  param.Type,
+						})
+					}
+				}
 			}
+
+			if fn.Type.Results != nil {
+				Results = dst.FieldList{
+					List: []*dst.Field{},
+				}
+				for _, result := range fn.Type.Results.List {
+					if result.Names != nil {
+						for _, name := range result.Names {
+							Results.List = append(Results.List, &dst.Field{
+								Names: []*dst.Ident{name},
+								Type:  result.Type,
+							})
+						}
+					} else {
+						Results.List = append(Results.List, &dst.Field{
+							Type: result.Type,
+						})
+					}
+				}
+			}
+
 			funcInfo := FuncInfo{
 				OriginalIdentifier: &originalIdentifier,
 				Params:             &Params,
@@ -104,7 +135,7 @@ func extractFuncInfo(node *dst.File) []FuncInfo {
 func modifyOriginalFunctions(tree *dst.File) {
 	dst.Inspect(tree, func(n dst.Node) bool {
 		if fn, ok := n.(*dst.FuncDecl); ok && fn.Name.IsExported() {
-			fn.Name.Name = prefixForModifiedFunction + fn.Name.Name
+			fn.Name.Name = fmt.Sprintf(modifiedFunctionFormat, fn.Name.Name)
 		}
 		return true
 	})
@@ -121,8 +152,6 @@ func removeOriginalAndUnexportedFunctions(tree *dst.File) {
 }
 
 func generateNewClientFunc(info FuncInfo) *jen.Statement {
-	modifiedFunctionName := prefixForModifiedFunction + info.OriginalIdentifier.Name
-	_ = modifiedFunctionName
 	fn := jen.Func().Id(info.OriginalIdentifier.Name).
 		ParamsFunc(func(g *jen.Group) {
 			for _, param := range info.Params.List {
@@ -155,6 +184,52 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 			jen.Return(jen.Id("sendMessage").Call(jen.Id("data"))),
 		)
 	fn.Line()
+
+	exposedFn := jen.Func().Id(fmt.Sprintf(wrapperFunctionFormat, info.OriginalIdentifier.Name)).
+		Params(
+			jen.Id("this").Qual("syscall/js", "Value"),
+			jen.Id("p").Index().Qual("syscall/js", "Value"),
+		).Params(jen.Interface()).
+		BlockFunc(func(g *jen.Group) {
+
+			paramCount := len(info.Params.List)
+			g.If(jen.Len(jen.Id("p")).Op("!=").Lit(paramCount)).Block(
+				jen.Return(jen.Qual("errors", "New").Call(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("expected %d arguments, got %%d", paramCount)), jen.Len(jen.Id("p"))))),
+			)
+			for i, param := range info.Params.List {
+				if len(param.Names) > 0 {
+					paramName := param.Names[0].Name
+					g.If(jen.Id(paramName).Op(",").Id("ok").Op(":=").Id("p").Index(jen.Lit(i)).Assert(jen.Qual("", param.Type.(*dst.Ident).Name)).Op(";").Op("!").Id("ok").Block(
+						jen.Return(jen.Qual("errors", "New").Call(jen.Lit(fmt.Sprintf("parameter '%s' is not in the received arguments", paramName)))),
+					))
+				}
+			}
+			g.Return(
+				jen.Id(info.OriginalIdentifier.Name).
+					ParamsFunc(func(g *jen.Group) {
+						for _, param := range info.Params.List {
+							if len(param.Names) > 0 {
+								g.Id(param.Names[0].Name)
+							}
+						}
+					}),
+			)
+		})
+	exposedFn.Line()
+
+	return jen.Add(fn, exposedFn)
+}
+
+func generateClientMain(funcInfos []FuncInfo) *jen.Statement {
+	fn := jen.Func().Id("main").Params().BlockFunc(func(g *jen.Group) {
+		g.Id("global").Op(":=").Qual("syscall/js", "Global").Call()
+		for _, fnInfo := range funcInfos {
+			g.Id("global").Dot("Set").Call(jen.Lit(fnInfo.OriginalIdentifier.Name), jen.Qual("syscall/js", "FuncOf").Call(jen.Id(fmt.Sprintf(wrapperFunctionFormat, fnInfo.OriginalIdentifier.Name))))
+		}
+		g.Line()
+		g.Select().Block()
+	})
+
 	return fn
 }
 
@@ -165,8 +240,8 @@ func generateJSSendMessageFunction() *jen.Statement {
 		jen.If(jen.Id("sendMessageFunc").Dot("Type").Call().Op("!=").Qual("syscall/js", "TypeFunction")).Block(
 			jen.Return(jen.Qual("errors", "New").Call(jen.Lit("sendMessage is not a JS function"))),
 		),
-		jen.Id("uint8Array").Op(":=").Qual("syscall/js", "TypedArrayOf").Call(jen.Id("data")),
-		jen.Defer().Id("uint8Array").Dot("Release").Call(),
+		jen.Id("uint8Array").Op(":=").Qual("syscall/js", "Global").Call().Dot("Get").Call(jen.Lit("Uint8Array")).Dot("New").Call(jen.Len(jen.Id("data"))),
+		jen.Qual("syscall/js", "CopyBytesToJS").Call(jen.Id("uint8Array"), jen.Id("data")),
 		jen.Id("sendMessageFunc").Dot("Invoke").Call(jen.Id("uint8Array")),
 		jen.Return(jen.Nil()),
 	).Line()
@@ -229,7 +304,7 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 									)),
 								))
 							}
-							modifiedFunctionName := prefixForModifiedFunction + fnInfo.OriginalIdentifier.Name
+							modifiedFunctionName := fmt.Sprintf(modifiedFunctionFormat, fnInfo.OriginalIdentifier.Name)
 
 							if len(fnInfo.Results.List) == 0 {
 								caseGenerator.Id(modifiedFunctionName).CallFunc(func(callGenerator *jen.Group) {
@@ -487,6 +562,10 @@ func main() {
 
 	funcInfos := extractFuncInfo(tree)
 
+	// lo.ForEach(funcInfos, func(info FuncInfo, _ int) {
+	// 	log.Debugf("Found function: %s", info)
+	// })
+
 	newFile := jen.NewFile("main")
 	switch generatorType {
 	case SERVER:
@@ -498,6 +577,7 @@ func main() {
 			newFile.Add(generateNewClientFunc(info))
 		}
 		newFile.Add(generateJSSendMessageFunction())
+		newFile.Add(generateClientMain(funcInfos))
 	}
 
 	_, err = writeCombinedTreeAndGenerated(tree, newFile, output, generatorType)
