@@ -262,7 +262,7 @@ func generateJsValueToAny() *jen.Statement {
 		jen.Id("v").Qual("syscall/js", "Value"),
 		jen.Id("targetType").Qual("reflect", "Type"),
 	).Params(
-		jen.Interface(), jen.Interface(),
+		jen.Any(), jen.Any(),
 	).BlockFunc(func(g *jen.Group) {
 		g.Switch(jen.Id("v").Dot("Type").Call()).BlockFunc(func(f *jen.Group) {
 			f.Case(jen.Qual("syscall/js", "TypeBoolean")).BlockFunc(func(g *jen.Group) {
@@ -288,7 +288,7 @@ func generateJsValueToAny() *jen.Statement {
 				g.Return(jen.Id("v").Dot("String").Call(), jen.Nil())
 			})
 			f.Case(jen.Qual("syscall/js", "TypeObject")).BlockFunc(func(h *jen.Group) {
-				h.Id("result").Op(":=").Make(jen.Map(jen.String()).Interface())
+				h.Id("result").Op(":=").Make(jen.Map(jen.String()).Any())
 				h.Id("keys").Op(":=").Qual("syscall/js", "Global").Call().Dot("Get").Call(jen.Lit("Object")).Dot("Call").Call(jen.Lit("keys"), jen.Id("v"))
 				h.For(jen.Id("i").Op(":=").Lit(0), jen.Id("i").Op("<").Id("keys").Dot("Length").Call(), jen.Id("i").Op("++")).BlockFunc(func(i *jen.Group) {
 					i.Id("key").Op(":=").Id("keys").Dot("Index").Call(jen.Id("i")).Dot("String").Call()
