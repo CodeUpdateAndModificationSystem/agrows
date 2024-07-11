@@ -163,7 +163,7 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 			}
 		}).
 		ParamsFunc(func(g *jen.Group) {
-			g.Error()
+			g.Any()
 		}).
 		Block(
 			jen.Id("data").Op(",").Err().Op(":=").Qual("github.com/codeupdateandmodificationsystem/protocol", "EncodeFunctionCall").
@@ -189,19 +189,25 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 		Params(
 			jen.Id("this").Qual("syscall/js", "Value"),
 			jen.Id("p").Index().Qual("syscall/js", "Value"),
-		).Params(jen.Interface()).
+		).Params(jen.Any()).
 		BlockFunc(func(g *jen.Group) {
 
 			paramCount := len(info.Params.List)
 			g.If(jen.Len(jen.Id("p")).Op("!=").Lit(paramCount)).Block(
-				jen.Return(jen.Qual("errors", "New").Call(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("expected %d arguments, got %%d", paramCount)), jen.Len(jen.Id("p"))))),
+				jen.Return(generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("expected %d arguments, got %%d", paramCount)), jen.Len(jen.Id("p"))))),
 			)
 			for i, param := range info.Params.List {
 				if len(param.Names) > 0 {
 					paramName := param.Names[0].Name
+					paramNameAsAny := paramName + "AsAny"
+					g.Id(paramNameAsAny).Op(",").Err().Op(":=").Id("jsValueToAny").Call(jen.Id("p").Index(jen.Lit(i)), jen.Qual("reflect", "TypeOf").Call(jen.Parens(jen.Op("*").Qual("", param.Type.(*dst.Ident).Name)).Call(jen.Nil())).Dot("Elem").Call())
+					g.If(jen.Err().Op("!=").Nil()).Block(
+						jen.Return(generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("failed to make go type '%s' from js value: %%+v", param.Type.(*dst.Ident).Name)), jen.Err()))),
+					)
 					g.Id(paramName).Op(",").Id("ok").Op(":=").Id("p").Index(jen.Lit(i)).Assert(jen.Qual("", param.Type.(*dst.Ident).Name))
 					g.If(jen.Op("!").Id("ok")).Block(
-						jen.Return(jen.Qual("errors", "New").Call(jen.Lit(fmt.Sprintf("parameter '%s' is not in the received arguments", paramName)))))
+						jen.Return(generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("parameter '%s' is not in the received arguments", paramName))))),
+					)
 				}
 			}
 			g.Return(
@@ -234,11 +240,11 @@ func generateClientMain(funcInfos []FuncInfo) *jen.Statement {
 }
 
 func generateJSSendMessageFunction() *jen.Statement {
-	return jen.Func().Id("sendMessage").Params(jen.Id("data").Index().Byte()).Error().Block(
+	return jen.Func().Id("sendMessage").Params(jen.Id("data").Index().Byte()).Any().Block(
 		jen.Id("jsGlobal").Op(":=").Qual("syscall/js", "Global").Call(),
 		jen.Id("sendMessageFunc").Op(":=").Id("jsGlobal").Dot("Get").Call(jen.Lit("sendMessage")),
 		jen.If(jen.Id("sendMessageFunc").Dot("Type").Call().Op("!=").Qual("syscall/js", "TypeFunction")).Block(
-			jen.Return(jen.Qual("errors", "New").Call(jen.Lit("sendMessage is not a JS function"))),
+			jen.Return(generateJsGlobalError(jen.Lit("sendMessage is not a JS function"))),
 		),
 		jen.Id("uint8Array").Op(":=").Qual("syscall/js", "Global").Call().Dot("Get").Call(jen.Lit("Uint8Array")).Dot("New").Call(jen.Len(jen.Id("data"))),
 		jen.Qual("syscall/js", "CopyBytesToJS").Call(jen.Id("uint8Array"), jen.Id("data")),
@@ -247,13 +253,76 @@ func generateJSSendMessageFunction() *jen.Statement {
 	).Line()
 }
 
+func generateJsGlobalError(errMsg jen.Code) jen.Code {
+	return jen.Qual("syscall/js", "Global").Call().Dot("Get").Call(jen.Lit("Error")).Dot("New").Call(errMsg)
+}
+
+func generateJsValueToAny() *jen.Statement {
+	return jen.Func().Id("jsValueToAny").Params(
+		jen.Id("v").Qual("syscall/js", "Value"),
+		jen.Id("targetType").Qual("reflect", "Type"),
+	).Params(
+		jen.Interface(), jen.Interface(),
+	).BlockFunc(func(g *jen.Group) {
+		g.Switch(jen.Id("v").Dot("Type").Call()).BlockFunc(func(f *jen.Group) {
+			f.Case(jen.Qual("syscall/js", "TypeBoolean")).BlockFunc(func(g *jen.Group) {
+				g.Return(jen.Id("v").Dot("Bool").Call(), jen.Nil())
+			})
+			f.Case(jen.Qual("syscall/js", "TypeNumber")).BlockFunc(func(h *jen.Group) {
+				h.Switch(jen.Id("targetType").Dot("Kind").Call()).Block(
+					jen.Case(jen.Qual("reflect", "Int"), jen.Qual("reflect", "Int8"), jen.Qual("reflect", "Int16"), jen.Qual("reflect", "Int32"), jen.Qual("reflect", "Int64")).BlockFunc(func(i *jen.Group) {
+						i.Return(jen.Id("int").Call(jen.Id("v").Dot("Int").Call()), jen.Nil())
+					}),
+					jen.Case(jen.Qual("reflect", "Uint"), jen.Qual("reflect", "Uint8"), jen.Qual("reflect", "Uint16"), jen.Qual("reflect", "Uint32"), jen.Qual("reflect", "Uint64")).BlockFunc(func(i *jen.Group) {
+						i.Return(jen.Id("uint").Call(jen.Id("v").Dot("Int").Call()), jen.Nil())
+					}),
+					jen.Case(jen.Qual("reflect", "Float32"), jen.Qual("reflect", "Float64")).BlockFunc(func(i *jen.Group) {
+						i.Return(jen.Id("v").Dot("Float").Call(), jen.Nil())
+					}),
+					jen.Default().BlockFunc(func(i *jen.Group) {
+						i.Return(jen.Id("v").Dot("Float").Call(), jen.Nil())
+					}),
+				)
+			})
+			f.Case(jen.Qual("syscall/js", "TypeString")).BlockFunc(func(g *jen.Group) {
+				g.Return(jen.Id("v").Dot("String").Call(), jen.Nil())
+			})
+			f.Case(jen.Qual("syscall/js", "TypeObject")).BlockFunc(func(h *jen.Group) {
+				h.Id("result").Op(":=").Make(jen.Map(jen.String()).Interface())
+				h.Id("keys").Op(":=").Qual("syscall/js", "Global").Call().Dot("Get").Call(jen.Lit("Object")).Dot("Call").Call(jen.Lit("keys"), jen.Id("v"))
+				h.For(jen.Id("i").Op(":=").Lit(0), jen.Id("i").Op("<").Id("keys").Dot("Length").Call(), jen.Id("i").Op("++")).BlockFunc(func(i *jen.Group) {
+					i.Id("key").Op(":=").Id("keys").Dot("Index").Call(jen.Id("i")).Dot("String").Call()
+					i.Id("value").Op(",").Err().Op(":=").Id("jsValueToAny").Call(jen.Id("v").Dot("Get").Call(jen.Id("key")), jen.Qual("reflect", "TypeOf").Call(jen.Parens(jen.Op("*").Any()).Call(jen.Nil())).Dot("Elem").Call())
+					i.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
+					i.Id("result").Index(jen.Id("key")).Op("=").Id("value")
+				})
+				h.List(jen.Id("jsonData"), jen.Err()).Op(":=").Qual("encoding/json", "Marshal").Call(jen.Id("result"))
+				h.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit("failed to marshal js object to json: %v"), jen.Err()))))
+				h.Id("targetValue").Op(":=").Qual("reflect", "New").Call(jen.Id("targetType")).Dot("Interface").Call()
+				h.Err().Op("=").Qual("encoding/json", "Unmarshal").Call(jen.Id("jsonData"), jen.Id("targetValue"))
+				h.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit("failed to unmarshal json to target type: %v"), jen.Err()))))
+				h.Return(jen.Qual("reflect", "ValueOf").Call(jen.Id("targetValue")).Dot("Elem").Call().Dot("Interface").Call(), jen.Nil())
+			})
+			f.Case(jen.Qual("syscall/js", "TypeFunction")).BlockFunc(func(g *jen.Group) {
+				g.Return(jen.Id("v"), jen.Nil())
+			})
+			f.Case(jen.Qual("syscall/js", "TypeUndefined"), jen.Qual("syscall/js", "TypeNull")).BlockFunc(func(g *jen.Group) {
+				g.Return(jen.Nil(), jen.Nil())
+			})
+			f.Default().BlockFunc(func(g *jen.Group) {
+				g.Return(jen.Nil(), generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit("unsupported js value type: %s"), jen.Id("v").Dot("Type").Call())))
+			})
+		})
+	}).Line()
+}
+
 func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 	return jen.Func().
 		Id("AgrowsReceive").
 		Params(jen.Id("data").Qual("", "[]byte")).
 		Params(jen.String(), jen.Error()).
 		Block(
-			jen.List(jen.Id("functionName"), jen.Id("args"), jen.Id("err")).
+			jen.List(jen.Id("functionName"), jen.Id("args"), jen.Err()).
 				Op(":=").
 				Qual("github.com/codeupdateandmodificationsystem/protocol", "DecodeFunctionCall").
 				Call(jen.Id("data"), jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call()),
@@ -563,10 +632,6 @@ func main() {
 
 	funcInfos := extractFuncInfo(tree)
 
-	// lo.ForEach(funcInfos, func(info FuncInfo, _ int) {
-	// 	log.Debugf("Found function: %s", info)
-	// })
-
 	newFile := jen.NewFile("main")
 	switch generatorType {
 	case SERVER:
@@ -574,6 +639,7 @@ func main() {
 		newFile.Add(generateServerReceiver(funcInfos))
 	case CLIENT:
 		removeOriginalAndUnexportedFunctions(tree)
+		newFile.Add(generateJsValueToAny())
 		for _, info := range funcInfos {
 			newFile.Add(generateNewClientFunc(info))
 		}
