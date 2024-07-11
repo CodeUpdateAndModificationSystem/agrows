@@ -204,7 +204,7 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 					g.If(jen.Err().Op("!=").Nil()).Block(
 						jen.Return(generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("failed to make go type '%s' from js value: %%+v", param.Type.(*dst.Ident).Name)), jen.Err()))),
 					)
-					g.Id(paramName).Op(",").Id("ok").Op(":=").Id("p").Index(jen.Lit(i)).Assert(jen.Qual("", param.Type.(*dst.Ident).Name))
+					g.Id(paramName).Op(",").Id("ok").Op(":=").Id(paramNameAsAny).Assert(jen.Qual("", param.Type.(*dst.Ident).Name))
 					g.If(jen.Op("!").Id("ok")).Block(
 						jen.Return(generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("parameter '%s' is not in the received arguments", paramName))))),
 					)
