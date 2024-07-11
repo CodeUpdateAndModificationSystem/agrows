@@ -380,7 +380,8 @@ func writeCombinedTreeAndGenerated(tree *dst.File, generated *jen.File, writer i
 	if genType == SERVER {
 		filePrefix += `//go:build server
 `
-	} else {
+	} else if genType == CLIENT {
+		tree.Name.Name = "main"
 		filePrefix += `//go:build js && wasm && client
 `
 	}
