@@ -447,8 +447,7 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 func writeCombinedTreeAndGenerated(tree *dst.File, generated *jen.File, writer io.Writer, genType byte) (int, error) {
 	var filePrefix string
 	if genType == SERVER {
-		filePrefix += `//go:build server
-`
+		// nothing
 	} else if genType == CLIENT {
 		tree.Name.Name = "main"
 		filePrefix += `//go:build js && wasm && client
