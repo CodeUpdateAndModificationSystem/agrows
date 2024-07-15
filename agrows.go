@@ -20,53 +20,58 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
+type ParamReflectInfo struct {
+	DstField *dst.Field
+	IsStruct bool
+}
+
+func (p *ParamReflectInfo) String() string {
+	if len(p.DstField.Names) > 0 && p.DstField.Names[0] != nil {
+		return fmt.Sprintf("%s isStruct: %t", p.DstField.Names[0].Name, p.IsStruct)
+	}
+
+	return fmt.Sprintf("%s isStruct: %t", p.DstField.Type.(*dst.Ident).Name, p.IsStruct)
+}
+
 type FuncInfo struct {
 	OriginalIdentifier *dst.Ident
-	Params             *dst.FieldList
-	Results            *dst.FieldList
+	Params             []*ParamReflectInfo
+	Results            []*ParamReflectInfo
+}
+
+func (f *FuncInfo) String() string {
+	var params []string
+	var results []string
+
+	for _, param := range f.Params {
+		params = append(params, param.String())
+	}
+
+	for _, result := range f.Results {
+		results = append(results, result.String())
+	}
+
+	return fmt.Sprintf("func %s(%s) (%s)",
+		f.ToIdentifierString(),
+		strings.Join(params, ", "),
+		strings.Join(results, ", "))
+}
+
+func (f *FuncInfo) ToIdentifierString() string {
+	if f.OriginalIdentifier != nil {
+		return f.OriginalIdentifier.Name
+	}
+	return ""
+}
+
+type Input struct {
+	FileName  string
+	Functions []FuncInfo
+	TypeMap   map[string]dst.Node
 }
 
 const modifiedFunctionFormat = "agrows_%s"
 const wrapperFunctionFormat = "%sWrapper"
-
-func (f FuncInfo) String() string {
-	var sb strings.Builder
-
-	sb.WriteString(f.OriginalIdentifier.Name)
-	sb.WriteString("(")
-	for i, param := range f.Params.List {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		for j, name := range param.Names {
-			if j > 0 {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(name.Name)
-		}
-		sb.WriteString(" ")
-		sb.WriteString(param.Type.(*dst.Ident).Name)
-	}
-	sb.WriteString(") → (")
-	for i, result := range f.Results.List {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		for j, name := range result.Names {
-			if j > 0 {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(name.Name)
-		}
-		if len(result.Names) > 0 {
-			sb.WriteString(" ")
-		}
-		sb.WriteString(result.Type.(*dst.Ident).Name)
-	}
-	sb.WriteString(")")
-
-	return sb.String()
-}
 
 func parseFileToTree(r io.Reader) (*dst.File, error) {
 	fset := token.NewFileSet()
@@ -77,54 +82,81 @@ func parseFileToTree(r io.Reader) (*dst.File, error) {
 	return file, nil
 }
 
-func extractFuncInfo(node *dst.File) []FuncInfo {
+func isStruct(typeMap map[string]dst.Node, expr dst.Expr) bool {
+	switch t := expr.(type) {
+	case *dst.StructType:
+		return true
+	case *dst.Ident:
+		if node, exists := typeMap[t.Name]; exists {
+			if _, ok := node.(*dst.StructType); ok {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func extractTypeMap(node *dst.File) map[string]dst.Node {
+	typeMap := make(map[string]dst.Node)
+	dst.Inspect(node, func(n dst.Node) bool {
+		switch decl := n.(type) {
+		case *dst.GenDecl:
+			for _, spec := range decl.Specs {
+				if ts, ok := spec.(*dst.TypeSpec); ok {
+					typeMap[ts.Name.Name] = ts.Type
+				}
+			}
+		}
+		return true
+	})
+	return typeMap
+}
+
+func extractFuncInfo(node *dst.File, typeMap map[string]dst.Node) []FuncInfo {
 	var funcs []FuncInfo
+
 	dst.Inspect(node, func(n dst.Node) bool {
 		if fn, ok := n.(*dst.FuncDecl); ok && fn.Name.IsExported() {
 			originalIdentifier := *fn.Name
 
-			var Params dst.FieldList
-			var Results dst.FieldList
+			funcInfo := FuncInfo{
+				OriginalIdentifier: &originalIdentifier,
+				Params:             []*ParamReflectInfo{},
+				Results:            []*ParamReflectInfo{},
+			}
 
 			if fn.Type.Params != nil {
-				Params = dst.FieldList{
-					List: []*dst.Field{},
-				}
 				for _, param := range fn.Type.Params.List {
 					for _, name := range param.Names {
-						Params.List = append(Params.List, &dst.Field{
-							Names: []*dst.Ident{name},
-							Type:  param.Type,
+						funcInfo.Params = append(funcInfo.Params, &ParamReflectInfo{
+							DstField: &dst.Field{
+								Names: []*dst.Ident{name},
+								Type:  param.Type,
+							},
+							IsStruct: isStruct(typeMap, param.Type),
 						})
 					}
 				}
 			}
 
 			if fn.Type.Results != nil {
-				Results = dst.FieldList{
-					List: []*dst.Field{},
-				}
 				for _, result := range fn.Type.Results.List {
+					var resultName *dst.Ident
 					if result.Names != nil {
-						for _, name := range result.Names {
-							Results.List = append(Results.List, &dst.Field{
-								Names: []*dst.Ident{name},
-								Type:  result.Type,
-							})
-						}
-					} else {
-						Results.List = append(Results.List, &dst.Field{
-							Type: result.Type,
-						})
+						resultName = result.Names[0]
 					}
+					funcInfo.Results = append(funcInfo.Results, &ParamReflectInfo{
+						DstField: &dst.Field{
+							Names: []*dst.Ident{resultName},
+							Type:  result.Type,
+						},
+						IsStruct: isStruct(typeMap, result.Type),
+					})
 				}
 			}
 
-			funcInfo := FuncInfo{
-				OriginalIdentifier: &originalIdentifier,
-				Params:             &Params,
-				Results:            &Results,
-			}
 			funcs = append(funcs, funcInfo)
 		}
 		return true
@@ -154,7 +186,8 @@ func removeOriginalAndUnexportedFunctions(tree *dst.File) {
 func generateNewClientFunc(info FuncInfo) *jen.Statement {
 	fn := jen.Func().Id(info.OriginalIdentifier.Name).
 		ParamsFunc(func(g *jen.Group) {
-			for _, param := range info.Params.List {
+			for _, paramInfo := range info.Params {
+				param := paramInfo.DstField
 				if len(param.Names) > 0 {
 					g.Id(param.Names[0].Name).Qual("", param.Type.(*dst.Ident).Name)
 				} else {
@@ -171,7 +204,8 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 					jen.Lit(info.OriginalIdentifier.Name),
 					jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call(),
 					jen.Map(jen.String()).Any().ValuesFunc(func(g *jen.Group) {
-						for _, param := range info.Params.List {
+						for _, paramInfo := range info.Params {
+							param := paramInfo.DstField
 							g.Line().Lit(param.Names[0].Name).Op(":").Id(param.Names[0].Name)
 						}
 						g.Line()
@@ -192,11 +226,12 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 		).Params(jen.Any()).
 		BlockFunc(func(g *jen.Group) {
 
-			paramCount := len(info.Params.List)
+			paramCount := len(info.Params)
 			g.If(jen.Len(jen.Id("p")).Op("!=").Lit(paramCount)).Block(
 				jen.Return(generateJsGlobalError(jen.Qual("fmt", "Sprintf").Call(jen.Lit(fmt.Sprintf("expected %d arguments, got %%d", paramCount)), jen.Len(jen.Id("p"))))),
 			)
-			for i, param := range info.Params.List {
+			for i, paramInfo := range info.Params {
+				param := paramInfo.DstField
 				if len(param.Names) > 0 {
 					paramName := param.Names[0].Name
 					paramNameAsAny := paramName + "AsAny"
@@ -213,7 +248,8 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 			g.Return(
 				jen.Id(info.OriginalIdentifier.Name).
 					ParamsFunc(func(g *jen.Group) {
-						for _, param := range info.Params.List {
+						for _, paramInfo := range info.Params {
+							param := paramInfo.DstField
 							if len(param.Names) > 0 {
 								g.Id(param.Names[0].Name)
 							}
@@ -337,7 +373,8 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 					generator.Case(jen.Lit(fnInfo.OriginalIdentifier.Name)).
 						BlockFunc(func(caseGenerator *jen.Group) {
 							caseGenerator.Var().DefsFunc(func(g *jen.Group) {
-								for _, param := range fnInfo.Params.List {
+								for _, paramInfo := range fnInfo.Params {
+									param := paramInfo.DstField
 									originalParamName := param.Names[0].Name
 									paramName := originalParamName + "Param"
 									paramType := param.Type.(*dst.Ident).Name
@@ -345,14 +382,23 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 
 									g.Id(paramName).Qual("", paramType)
 									g.Id(paramNameArg).Qual("github.com/codeupdateandmodificationsystem/protocol", "Argument")
+
+									if paramInfo.IsStruct {
+										paramNameValue := paramName + "Value"
+										paramValue := originalParamName + "Value"
+										g.Id(paramNameValue).Op(",").Id(paramValue).Qual("reflect", "Value")
+									}
 								}
 								g.Id("ok").Bool()
 							})
-							for _, param := range fnInfo.Params.List {
+							for _, paramInfo := range fnInfo.Params {
+								param := paramInfo.DstField
 								originalParamName := param.Names[0].Name
 								paramName := originalParamName + "Param"
 								paramType := param.Type.(*dst.Ident).Name
 								paramNameArg := paramName + "Arg"
+								paramNameValue := paramName + "Value"
+								paramValue := originalParamName + "Value"
 
 								caseGenerator.If(jen.Id(paramNameArg).Op(",").Id("ok").Op("=").Id("args").Index(jen.Lit(originalParamName)).Op(";").Op("!").Id("ok").Block(
 									jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
@@ -363,21 +409,48 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 									)),
 								))
 
-								caseGenerator.If(jen.Id(paramName).Op(",").Id("ok").Op("=").Id(paramNameArg).Op(".").Qual("", "Value").Assert(jen.Qual("", paramType)).Op(";").Op("!").Id("ok").Block(
-									jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
-										jen.Qual("fmt", "Sprintf").Call(
-											jen.Lit("failed to cast parameter '%s' to '%s'"),
-											jen.Id(paramName),
-											jen.Lit(paramType),
-										),
-									)),
-								))
+								if paramInfo.IsStruct {
+									caseGenerator.Id(paramNameValue).Op("=").Qual("reflect", "ValueOf").Call(jen.Id(paramNameArg).Dot("Value"))
+
+									_ = paramType
+									caseGenerator.Id(paramValue).Op("=").Qual("reflect", "ValueOf").Call(jen.Op("&").Id(paramName)).Dot("Elem").Call()
+
+									caseGenerator.For(jen.Id("i").Op(":=").Lit(0), jen.Id("i").Op("<").Id(paramValue).Dot("NumField").Call(), jen.Id("i").Op("++")).BlockFunc(func(g *jen.Group) {
+										g.Id("key").Op(":=").Id(paramValue).Dot("Type").Call().Dot("Field").Call(jen.Id("i")).Dot("Name")
+										g.Id("paramValueField").Op(":=").Id(paramNameValue).Dot("FieldByName").Call(jen.Id("key"))
+										g.Id("fieldValue").Op(":=").Id(paramValue).Dot("Field").Call(jen.Id("i"))
+										g.If(jen.Id("fieldValue").Dot("CanSet").Call()).Block(
+											jen.Id(paramValue).Dot("Field").Call(jen.Id("i")).Dot("Set").Call(jen.Id("paramValueField")),
+										)
+									})
+								} else {
+									caseGenerator.If(jen.Id(paramNameArg).Op(",").Id("ok").Op("=").Id("args").Index(jen.Lit(originalParamName)).Op(";").Op("!").Id("ok").Block(
+										jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
+											jen.Qual("fmt", "Sprintf").Call(
+												jen.Lit("parameter %s is not in the received arguments"),
+												jen.Lit(originalParamName),
+											),
+										)),
+									))
+
+									caseGenerator.If(jen.Id(paramName).Op(",").Id("ok").Op("=").Id(paramNameArg).Op(".").Qual("", "Value").Assert(jen.Qual("", paramType)).Op(";").Op("!").Id("ok").Block(
+										jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
+											jen.Qual("fmt", "Sprintf").Call(
+												jen.Lit("failed to cast parameter '%s' to '%s'"),
+												jen.Id(paramName),
+												jen.Lit(paramType),
+											),
+										)),
+									))
+								}
+
 							}
 							modifiedFunctionName := fmt.Sprintf(modifiedFunctionFormat, fnInfo.OriginalIdentifier.Name)
 
-							if len(fnInfo.Results.List) == 0 {
+							if len(fnInfo.Results) == 0 {
 								caseGenerator.Id(modifiedFunctionName).CallFunc(func(callGenerator *jen.Group) {
-									for _, param := range fnInfo.Params.List {
+									for _, paramInfo := range fnInfo.Params {
+										param := paramInfo.DstField
 										callGenerator.Id(param.Names[0].Name + "Param")
 									}
 								})
@@ -387,14 +460,14 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 
 							firstReturnedError := ""
 							firstReturnedString := ""
-							varNames := make([]string, len(fnInfo.Results.List))
-							for i := range fnInfo.Results.List {
-								if fnInfo.Results.List[i].Type.(*dst.Ident).Name == "error" {
+							varNames := make([]string, len(fnInfo.Results))
+							for i := range fnInfo.Results {
+								if fnInfo.Results[i].DstField.Type.(*dst.Ident).Name == "error" {
 									varNames[i] = "err" + fmt.Sprint(i)
 									firstReturnedError = varNames[i]
 									continue
 								}
-								if fnInfo.Results.List[i].Type.(*dst.Ident).Name == "string" {
+								if fnInfo.Results[i].DstField.Type.(*dst.Ident).Name == "string" {
 									varNames[i] = "str" + fmt.Sprint(i)
 									firstReturnedString = varNames[i]
 									continue
@@ -407,7 +480,8 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 									retGenerator.Id(varName)
 								}
 							}).Op(":=").Id(modifiedFunctionName).CallFunc(func(callGenerator *jen.Group) {
-								for _, param := range fnInfo.Params.List {
+								for _, paramInfo := range fnInfo.Params {
+									param := paramInfo.DstField
 									callGenerator.Id(param.Names[0].Name + "Param")
 								}
 							})
@@ -629,21 +703,32 @@ func main() {
 		log.Errorf(true, "Failed to parse file: %v", err)
 	}
 
-	funcInfos := extractFuncInfo(tree)
+	inputData := Input{
+		FileName:  *inputParameter,
+		Functions: make([]FuncInfo, 0),
+		TypeMap:   make(map[string]dst.Node),
+	}
+
+	inputData.TypeMap = extractTypeMap(tree)
+	inputData.Functions = extractFuncInfo(tree, inputData.TypeMap)
+
+	lo.ForEach(inputData.Functions, func(info FuncInfo, _ int) {
+		log.Debugf("Function: %s", info)
+	})
 
 	newFile := jen.NewFile("main")
 	switch generatorType {
 	case SERVER:
 		modifyOriginalFunctions(tree)
-		newFile.Add(generateServerReceiver(funcInfos))
+		newFile.Add(generateServerReceiver(inputData.Functions))
 	case CLIENT:
 		removeOriginalAndUnexportedFunctions(tree)
 		newFile.Add(generateJsValueToAny())
-		for _, info := range funcInfos {
+		for _, info := range inputData.Functions {
 			newFile.Add(generateNewClientFunc(info))
 		}
 		newFile.Add(generateJSSendMessageFunction())
-		newFile.Add(generateClientMain(funcInfos))
+		newFile.Add(generateClientMain(inputData.Functions))
 	}
 
 	_, err = writeCombinedTreeAndGenerated(tree, newFile, output, generatorType)
