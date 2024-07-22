@@ -267,7 +267,13 @@ func generateClientMain(funcInfos []FuncInfo) *jen.Statement {
 		g.Id("global").Op(":=").Qual("syscall/js", "Global").Call()
 		for _, fnInfo := range funcInfos {
 			g.Id("global").Dot("Set").Call(jen.Lit(fnInfo.OriginalIdentifier.Name), jen.Qual("syscall/js", "FuncOf").Call(jen.Id(fmt.Sprintf(wrapperFunctionFormat, fnInfo.OriginalIdentifier.Name))))
-			g.Id("println").Call(jen.Lit(fmt.Sprintf("AGROWS: '%s' function registered", fnInfo.OriginalIdentifier.Name)))
+			g.Id("println").Call(jen.Lit(fmt.Sprintf("AGROWS: '%s(%s)' function registered", fnInfo.OriginalIdentifier.Name, lo.Reduce(fnInfo.Params, func(agg string, item *ParamReflectInfo, i int) string {
+				agg += item.DstField.Type.(*dst.Ident).Name
+				if i < len(fnInfo.Params)-1 {
+					agg += ", "
+				}
+				return agg
+			}, ""))))
 		}
 		g.Line()
 		g.Select().Block()
