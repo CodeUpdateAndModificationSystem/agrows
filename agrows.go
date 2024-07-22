@@ -267,6 +267,7 @@ func generateClientMain(funcInfos []FuncInfo) *jen.Statement {
 		g.Id("global").Op(":=").Qual("syscall/js", "Global").Call()
 		for _, fnInfo := range funcInfos {
 			g.Id("global").Dot("Set").Call(jen.Lit(fnInfo.OriginalIdentifier.Name), jen.Qual("syscall/js", "FuncOf").Call(jen.Id(fmt.Sprintf(wrapperFunctionFormat, fnInfo.OriginalIdentifier.Name))))
+			g.Id("println").Call(jen.Lit(fmt.Sprintf("AGROWS: '%s' function registered", fnInfo.OriginalIdentifier.Name)))
 		}
 		g.Line()
 		g.Select().Block()
