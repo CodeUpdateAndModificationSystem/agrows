@@ -183,6 +183,14 @@ func removeOriginalAndUnexportedFunctions(tree *dst.File) {
 	tree.Decls = decls
 }
 
+func generateProtocolOptions() *jen.Statement {
+	if shouldCompress {
+		return jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call(jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Compression").Call(jen.True()))
+	} else {
+		return jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call()
+	}
+}
+
 func generateNewClientFunc(info FuncInfo) *jen.Statement {
 	fn := jen.Func().Id(info.OriginalIdentifier.Name).
 		ParamsFunc(func(g *jen.Group) {
@@ -202,7 +210,7 @@ func generateNewClientFunc(info FuncInfo) *jen.Statement {
 			jen.Id("data").Op(",").Err().Op(":=").Qual("github.com/codeupdateandmodificationsystem/protocol", "EncodeFunctionCall").
 				Call(
 					jen.Lit(info.OriginalIdentifier.Name),
-					jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call(),
+					generateProtocolOptions(),
 					jen.Map(jen.String()).Any().ValuesFunc(func(g *jen.Group) {
 						for _, paramInfo := range info.Params {
 							param := paramInfo.DstField
@@ -368,7 +376,7 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 			jen.List(jen.Id("functionName"), jen.Id("args"), jen.Err()).
 				Op(":=").
 				Qual("github.com/codeupdateandmodificationsystem/protocol", "DecodeFunctionCall").
-				Call(jen.Id("data"), jen.Qual("github.com/codeupdateandmodificationsystem/protocol", "Options").Call()),
+				Call(jen.Id("data"), generateProtocolOptions()),
 
 			jen.If(jen.Err().Op("!=").Nil()).Block(
 				jen.Return(jen.Lit(""), jen.Err()),
@@ -625,15 +633,20 @@ const (
 	CLIENT
 )
 
+var shouldCompress bool
+
 func main() {
 	inputParameter := flag.StringP("input", "i", "", "Input file (required)")
 	outputParameter := flag.StringP("output", "o", "", "Output file (default: agrows_<server|client>_<input_file>)")
 	debugParameter := flag.BoolP("dbg", "D", false, "Enable debug logging")
+	shouldCompressParameter := flag.BoolP("compress", "c", false, "If compression should be used in the protocol")
 
 	serverCmd := flag.NewFlagSet("server", flag.ExitOnError)
 	clientCmd := flag.NewFlagSet("client", flag.ExitOnError)
 
 	flag.Parse()
+
+	shouldCompress = *shouldCompressParameter
 
 	if *debugParameter {
 		log.SetMinLevel(log.DEBUG)
