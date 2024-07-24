@@ -379,25 +379,27 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 					generator.Empty()
 					generator.Case(jen.Lit(fnInfo.OriginalIdentifier.Name)).
 						BlockFunc(func(caseGenerator *jen.Group) {
-							caseGenerator.Var().DefsFunc(func(g *jen.Group) {
-								for _, paramInfo := range fnInfo.Params {
-									param := paramInfo.DstField
-									originalParamName := param.Names[0].Name
-									paramName := originalParamName + "Param"
-									paramType := param.Type.(*dst.Ident).Name
-									paramNameArg := paramName + "Arg"
+							if len(fnInfo.Params) != 0 {
+								caseGenerator.Var().DefsFunc(func(g *jen.Group) {
+									for _, paramInfo := range fnInfo.Params {
+										param := paramInfo.DstField
+										originalParamName := param.Names[0].Name
+										paramName := originalParamName + "Param"
+										paramType := param.Type.(*dst.Ident).Name
+										paramNameArg := paramName + "Arg"
 
-									g.Id(paramName).Qual("", paramType)
-									g.Id(paramNameArg).Qual("github.com/codeupdateandmodificationsystem/protocol", "Argument")
+										g.Id(paramName).Qual("", paramType)
+										g.Id(paramNameArg).Qual("github.com/codeupdateandmodificationsystem/protocol", "Argument")
 
-									if paramInfo.IsStruct {
-										paramNameValue := paramName + "Value"
-										paramValue := originalParamName + "Value"
-										g.Id(paramNameValue).Op(",").Id(paramValue).Qual("reflect", "Value")
+										if paramInfo.IsStruct {
+											paramNameValue := paramName + "Value"
+											paramValue := originalParamName + "Value"
+											g.Id(paramNameValue).Op(",").Id(paramValue).Qual("reflect", "Value")
+										}
 									}
-								}
-								g.Id("ok").Bool()
-							})
+									g.Id("ok").Bool()
+								})
+							}
 							for _, paramInfo := range fnInfo.Params {
 								param := paramInfo.DstField
 								originalParamName := param.Names[0].Name
@@ -406,15 +408,6 @@ func generateServerReceiver(infos []FuncInfo) *jen.Statement {
 								paramNameArg := paramName + "Arg"
 								paramNameValue := paramName + "Value"
 								paramValue := originalParamName + "Value"
-
-								caseGenerator.If(jen.Id(paramNameArg).Op(",").Id("ok").Op("=").Id("args").Index(jen.Lit(originalParamName)).Op(";").Op("!").Id("ok").Block(
-									jen.Return(jen.Lit(""), jen.Qual("errors", "New").Call(
-										jen.Qual("fmt", "Sprintf").Call(
-											jen.Lit("parameter %s is not in the received arguments"),
-											jen.Lit(originalParamName),
-										),
-									)),
-								))
 
 								if paramInfo.IsStruct {
 									caseGenerator.Id(paramNameValue).Op("=").Qual("reflect", "ValueOf").Call(jen.Id(paramNameArg).Dot("Value"))
