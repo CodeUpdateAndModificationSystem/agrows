@@ -8,7 +8,7 @@ require (
 	github.com/dave/dst v0.27.3
 	github.com/dave/jennifer v1.7.0
 	github.com/samber/lo v1.44.0
-	github.com/sett17/dnutlogger v0.0.0-20240629195301-09c2f6712250
+	github.com/dikkadev/dnutlogger v0.0.0-20240629195301-09c2f6712250
 	github.com/spf13/pflag v1.0.5
 )
 

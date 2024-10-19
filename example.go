@@ -5,7 +5,7 @@ package agrows
 import (
 	"fmt"
 
-	log "github.com/sett17/dnutlogger"
+	log "github.com/dikkadev/dnutlogger"
 )
 
 const (

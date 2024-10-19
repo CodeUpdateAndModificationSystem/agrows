@@ -16,7 +16,7 @@ import (
 	"github.com/dave/dst/decorator"
 	"github.com/dave/jennifer/jen"
 	"github.com/samber/lo"
-	log "github.com/sett17/dnutlogger"
+	log "github.com/dikkadev/dnutlogger"
 	flag "github.com/spf13/pflag"
 )
 
